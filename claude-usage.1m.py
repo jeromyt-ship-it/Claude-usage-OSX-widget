@@ -128,15 +128,41 @@ def fetch_usage_cached(token, active):
     return None, err
 
 
-def color_for(pct):
-    """Return ' | color=red' / ' | color=orange' / '' — ready to append to a line."""
+# ANSI codes used for independently-colored spans within a single xbar/
+# SwiftBar menu bar line (requires the `ansi=true` line attribute). Standard
+# 16-color codes cover red/green; orange needs the extended 256-color form.
+ANSI_RED = "\033[31m"
+ANSI_ORANGE = "\033[38;5;208m"
+ANSI_GREEN = "\033[32m"
+ANSI_RESET = "\033[0m"
+
+
+def color_word(pct):
+    """Return 'red' / 'orange' / 'green' for a percentage, or None."""
     if pct is None:
-        return ""
+        return None
     if pct >= 90:
-        return " | color=red"
+        return "red"
     if pct >= 70:
-        return " | color=orange"
-    return ""
+        return "orange"
+    return "green"
+
+
+def color_for(pct):
+    """Return ' | color=...' — ready to append to a dropdown line."""
+    word = color_word(pct)
+    return f" | color={word}" if word else ""
+
+
+def ansi_wrap(text, pct):
+    """Wrap text in ANSI color codes matching color_word(pct), for use on a
+    single xbar line with ansi=true (so multiple percentages on the same
+    line can each carry their own color)."""
+    word = color_word(pct)
+    if word is None:
+        return text
+    code = {"red": ANSI_RED, "orange": ANSI_ORANGE, "green": ANSI_GREEN}[word]
+    return f"{code}{text}{ANSI_RESET}"
 
 
 def reset_str(iso):
@@ -167,29 +193,24 @@ def main():
     s_pct = five.get("utilization")
     w_pct = week.get("utilization")
 
-    worst = max([p for p in (s_pct, w_pct) if p is not None], default=None)
+    # Session and weekly are colored independently (via ansi=true + per-span
+    # ANSI codes) so a high weekly % doesn't tint a low session % red too —
+    # each number's color reflects only its own percentage.
     if s_pct is not None and w_pct is not None:
-        title = f"{s_pct:.0f}/{w_pct:.0f}%"
-    elif worst is not None:
-        title = f"{worst:.0f}%"
+        title = f"{ansi_wrap(f'{s_pct:.0f}', s_pct)}/{ansi_wrap(f'{w_pct:.0f}', w_pct)}%"
+    elif s_pct is not None or w_pct is not None:
+        pct = s_pct if s_pct is not None else w_pct
+        title = ansi_wrap(f"{pct:.0f}%", pct)
     else:
         title = "?"
-    # The starburst icon (ICON_B64) always stays brand-orange; color= (text
-    # only) is what actually signals the warning state.
-    warn_color = "orange" if worst is not None and worst >= 70 else None
-    if worst is not None and worst >= 90:
-        warn_color = "red"
-    attrs = f"image={ICON_B64}"
-    if warn_color:
-        attrs += f" color={warn_color}"
-    print(f"{title} | {attrs}")
+    # The starburst icon (ICON_B64) always stays brand-orange.
+    print(f"{title} | image={ICON_B64} ansi=true")
 
     print("---")
     if s_pct is not None:
         print(f"Session (5h): {s_pct:.0f}%  {reset_str(five.get('resets_at'))}{color_for(s_pct)}")
     if w_pct is not None:
         print(f"Weekly: {w_pct:.0f}%  {reset_str(week.get('resets_at'))}{color_for(w_pct)}")
-    # (color_for now returns a leading " | color=..." so these lines are valid xbar attribute syntax)
 
     extra = usage.get("extra_usage") or {}
     used_credits = extra.get("used_credits")
